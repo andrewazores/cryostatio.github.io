@@ -237,13 +237,13 @@ When installed with <code>authentication.openshift.enabled=false</code> but <cod
 | `openshiftOauthProxy.image.tag`                             | Tag for the OpenShift OAuth Proxy container image                                                                                                                                                                                                                                                                           | `latest`                               |
 | `openshiftOauthProxy.resources.requests.cpu`                | CPU resource request for the OpenShift OAuth Proxy container                                                                                                                                                                                                                                                                | `25m`                                  |
 | `openshiftOauthProxy.resources.requests.memory`             | Memory resource request for the OpenShift OAuth Proxy container                                                                                                                                                                                                                                                             | `64Mi`                                 |
-| `openshiftOauthProxy.accessReview.enabled`                  | Whether the SubjectAccessReview/TokenAccessReview role checks for users and clients are enabled. If this is disabled then the proxy will only check that the user has valid credentials or holds a valid token                                                                                                              | `true`                                 |
+| `openshiftOauthProxy.accessReview.enabled`                  | Whether the SubjectAccessReview/TokenAccessReview role checks for users and clients are enabled. If this is disabled then the proxy will only check that the user has valid credentials or holds a valid token                                                                                                                              | `true`                                 |
 | `openshiftOauthProxy.accessReview.group`                    | The OpenShift resource group that the SubjectAccessReview/TokenAccessReview will be performed for. See https://github.com/openshift/oauth-proxy/?tab=readme-ov-file#delegate-authentication-and-authorization-to-openshift-for-infrastructure                                                                               | `""`                                   |
 | `openshiftOauthProxy.accessReview.resource`                 | The OpenShift resource that the SubjectAccessReview/TokenAccessReview will be performed for                                                                                                                                                                                                                                 | `pods`                                 |
-| `openshiftOauthProxy.accessReview.subresource`              | The OpenShift resource that the SubjectAccessReview/TokenAccessReview will be performed for                                                                                                                                                                                                                                 | `exec`                                 |
+| `openshiftOauthProxy.accessReview.subresource`              | The OpenShift subresource that the SubjectAccessReview/TokenAccessReview will be performed for. Empty string means no subresource is checked                                                                                                                                                                                | `""`                                   |
 | `openshiftOauthProxy.accessReview.name`                     | The OpenShift resource name that the SubjectAccessReview/TokenAccessReview will be performed for                                                                                                                                                                                                                            | `""`                                   |
 | `openshiftOauthProxy.accessReview.namespace`                | The OpenShift namespace that the SubjectAccessReview/TokenAccessReview will be performed for                                                                                                                                                                                                                                | `{{ .Release.Namespace }}`             |
-| `openshiftOauthProxy.accessReview.verb`                     | The OpenShift resource name that the SubjectAccessReview/TokenAccessReview will be performed for                                                                                                                                                                                                                            | `create`                               |
+| `openshiftOauthProxy.accessReview.verb`                     | The verb that the SubjectAccessReview/TokenAccessReview will be performed for                                                                                                                                                                                                                                               | `get`                                  |
 | `openshiftOauthProxy.accessReview.version`                  | The OpenShift resource version that the SubjectAccessReview/TokenAccessReview will be performed for                                                                                                                                                                                                                         | `""`                                   |
 | `openshiftOauthProxy.securityContext`                       | Security Context for the OpenShift OAuth Proxy container. Defaults to meet "restricted" [Pod Security Standard](https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted). See: [SecurityContext](https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/pod-v1/#security-context-1) | `{}`                                   |
 | `openshiftOauthProxy.config.extra`                          | Extra configurations for the OpenShift OAuth Proxy                                                                                                                                                                                                                                                                          |                                        |
@@ -253,6 +253,64 @@ When installed with <code>authentication.openshift.enabled=false</code> but <cod
 | `openshiftOauthProxy.config.extra.inPod.main.envSources`    | Sources for extra variables for the OpenShift OAuth Proxy **only in the Cryostat main pod**                                                                                                                                                                                                                                 | `[]`                                   |
 | `openshiftOauthProxy.config.extra.inPod.reports.envVars`    | Extra environment variables for the OpenShift OAuth Proxy **only in the report generator pods**                                                                                                                                                                                                                             | `[]`                                   |
 | `openshiftOauthProxy.config.extra.inPod.reports.envSources` | Sources for extra variables for the OpenShift OAuth Proxy **only in the report generator pods**                                                                                                                                                                                                                             | `[]`                                   |
+
+
+#### Fine-Grained RBAC on OpenShift
+
+When `authentication.openshift.enabled=true` and Basic authentication is **not** enabled, **Cryostat** activates fine-grained RBAC mode. In this mode, **Cryostat** performs a `SelfSubjectAccessReview` against the **OpenShift** cluster for every incoming API request, checking whether the authenticated user holds a sufficiently privileged **OpenShift** Role for the specific **Cryostat** resource and operation being requested. This allows an admin to assign some users full access to **Cryostat** and others only read access, using standard **OpenShift** Role and RoleBinding objects.
+
+Each **Cryostat** API permission is expressed as a `<resource>:<verb>` key (for example `activerecordings:read`) and is mapped to a **Kubernetes** resource/verb pair (for example `pods/exec:create`). The built-in default mapping for every permission is `pods/exec:create`. Admins can override individual permissions via `core.config.extra.envVars` by setting environment variables of the form `CRYOSTAT_SECURITY_RBAC_PERMISSIONS__<RESOURCE>_<VERB>_` to a value of the form `resource[/subresource]:verb`.
+
+**Cryostat** caches authorization decisions for up to one minute. Changes to user Roles or RoleBindings may take up to one minute to take effect.
+
+> **Note:** When Basic authentication (`authentication.basicAuth.enabled=true`) is also enabled, fine-grained RBAC checks are bypassed. Access becomes all-or-nothing for all authenticated users.
+
+##### Granting read-only access
+
+To give some users read-only access and others full access, remap every `read` permission to `pods:get` (a lower privilege granted by the built-in **OpenShift** `view` role) while leaving mutating permissions at the default `pods/exec:create` (granted by `admin` or `edit`).
+
+Pass the permission overrides via `core.config.extra.envVars` when installing or upgrading the chart. The example below shows `helm upgrade` syntax using `--set-json`:
+
+```bash
+helm upgrade cryostat ./charts/cryostat -n <cryostat-namespace> \
+  --set authentication.openshift.enabled=true \
+  --set-json 'core.config.extra.envVars=[
+    {"name":"CRYOSTAT_SECURITY_RBAC_PERMISSIONS__ACTIVERECORDINGS_READ_","value":"pods:get"},
+    {"name":"CRYOSTAT_SECURITY_RBAC_PERMISSIONS__ARCHIVEDRECORDINGS_READ_","value":"pods:get"},
+    {"name":"CRYOSTAT_SECURITY_RBAC_PERMISSIONS__ASYNCPROFILER_READ_","value":"pods:get"},
+    {"name":"CRYOSTAT_SECURITY_RBAC_PERMISSIONS__AUTOMATEDRULES_READ_","value":"pods:get"},
+    {"name":"CRYOSTAT_SECURITY_RBAC_PERMISSIONS__CREDENTIALS_READ_","value":"pods:get"},
+    {"name":"CRYOSTAT_SECURITY_RBAC_PERMISSIONS__DISCOVERYNODES_READ_","value":"pods:get"},
+    {"name":"CRYOSTAT_SECURITY_RBAC_PERMISSIONS__DISCOVERYPLUGINS_READ_","value":"pods:get"},
+    {"name":"CRYOSTAT_SECURITY_RBAC_PERMISSIONS__EVENTTEMPLATES_READ_","value":"pods:get"},
+    {"name":"CRYOSTAT_SECURITY_RBAC_PERMISSIONS__EVENTTYPES_READ_","value":"pods:get"},
+    {"name":"CRYOSTAT_SECURITY_RBAC_PERMISSIONS__HEAPDUMPS_READ_","value":"pods:get"},
+    {"name":"CRYOSTAT_SECURITY_RBAC_PERMISSIONS__MATCHEXPRESSIONS_READ_","value":"pods:get"},
+    {"name":"CRYOSTAT_SECURITY_RBAC_PERMISSIONS__PROBES_READ_","value":"pods:get"},
+    {"name":"CRYOSTAT_SECURITY_RBAC_PERMISSIONS__PROBETEMPLATES_READ_","value":"pods:get"},
+    {"name":"CRYOSTAT_SECURITY_RBAC_PERMISSIONS__RECORDINGMETADATA_READ_","value":"pods:get"},
+    {"name":"CRYOSTAT_SECURITY_RBAC_PERMISSIONS__REPORTS_READ_","value":"pods:get"},
+    {"name":"CRYOSTAT_SECURITY_RBAC_PERMISSIONS__TARGETS_READ_","value":"pods:get"},
+    {"name":"CRYOSTAT_SECURITY_RBAC_PERMISSIONS__THREADDUMPS_READ_","value":"pods:get"},
+    {"name":"CRYOSTAT_SECURITY_RBAC_PERMISSIONS__UNIFIEDLOGS_READ_","value":"pods:get"}
+  ]'
+```
+
+With this configuration, apply **OpenShift** RBAC as follows:
+
+- Grant `view` in the **Cryostat** installation namespace for read-only users:
+  ```
+  oc adm policy add-role-to-user -n <cryostat-namespace> view <username>
+  ```
+- Grant `admin` or `edit` in the **Cryostat** installation namespace for full-access users:
+  ```
+  oc adm policy add-role-to-user -n <cryostat-namespace> admin <username>
+  ```
+
+A user who has neither role will be able to log in (they pass the `get pods` proxy access review), but all **Cryostat** API requests will be rejected with `403 Forbidden` until they are granted an appropriate role.
+
+For a full list of available permission keys and their defaults, see the [Full permission reference](#full-permission-reference) table in the Operator configuration section.
+
 
 ### Other Parameters
 

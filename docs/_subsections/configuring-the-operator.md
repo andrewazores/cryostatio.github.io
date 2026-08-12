@@ -355,9 +355,10 @@ spec:
 
 ### Authorization Options
 
-On **OpenShift**, the authentication/authorization proxy deployed in front of the **Cryostat** application requires all users to pass a `create pods/exec` access review in the **Cryostat** installation namespace
+On **OpenShift**, the authentication/authorization proxy deployed in front of the **Cryostat** application requires all users to pass a `get pods` access review in the **Cryostat** installation namespace
 by default. This means that access to the **Cryostat** application is granted to exactly the set of **OpenShift** cluster user accounts and service accounts which have this Role. This can be configured
 using `spec.authorizationOptions.openShiftSSO.accessReview` as depicted below, but note that the `namespace` field should always be included and in most cases should match the **Cryostat** installation namespace.
+This Role only grants basic access to the Cryostat API and UI - see [below](#fine-grained-rbac-on-openshift) for further details on how Cryostat handles RBAC checks for specific actions.
 
 The auth proxy may also be configured to allow Basic authentication by creating a **Secret** containing an `htpasswd` user file. An `htpasswd` file granting access to a user named `user` with the
 password `pass` can be generated like this: `htpasswd -cbB htpasswd.conf user pass`. The password should use `bcrypt` hashing, specified by the `-B` flag.
@@ -377,13 +378,144 @@ spec:
     openShiftSSO: # only effective when running on OpenShift
       disable: false # set this to `true` to disable OpenShift SSO integration
       accessReview: # override this to change the required Role for users and service accounts to access the application
-        verb: create
+        verb: get
         resource: pods
-        subresource: exec
         namespace: cryostat-install-namespace
     basicAuth:
       secretName: my-secret # a Secret with this name must exist in the Cryostat installation namespace
       filename: htpasswd.conf # the name of the htpasswd user file within the Secret
+```
+
+#### Fine-Grained RBAC on OpenShift
+
+When **OpenShift** SSO integration is enabled and Basic authentication is **not** enabled, **Cryostat** activates fine-grained RBAC mode. In this mode, **Cryostat** performs a `SelfSubjectAccessReview`
+against the **OpenShift** cluster for every incoming API request, checking whether the authenticated user holds a sufficiently privileged **OpenShift** Role for the specific **Cryostat** resource and
+operation being requested. This allows an admin to assign some users full access to **Cryostat** and others only read access, using standard **OpenShift** (Cluster)Role and (Cluster)RoleBinding objects.
+
+Each **Cryostat** API permission is expressed as a `<resource>:<verb>` key (for example `activerecordings:read`) and is mapped to a **Kubernetes** resource/verb pair (for example `pods/exec:create`).
+When a user makes a request, **Cryostat** checks whether they are permitted to perform the mapped **Kubernetes** action, scoped to the **Cryostat** installation namespace. If the user passes the
+check, the request proceeds; otherwise it is rejected with a `403 Forbidden` response.
+
+The built-in default mapping for every permission is `pods/exec:create`. This means that, out of the box, a user needs the (Cluster)Role which would grant them the ability to invoke shell commands
+within Pods in the **Cryostat** installation namespace. Admins can override this default per-permission via `spec.authorizationOptions.rbacPermissions`, remapping individual permissions to
+lower-privilege **Kubernetes** roles in order to extend read-only access to less-privileged users, or to create custom (Cluster)Roles and (Cluster)RoleBindings as needed.
+
+**Cryostat** caches authorization decisions for one minute by default. Changes to user Roles or RoleBindings may take up to one minute to take effect.
+
+> **Note:** When Basic authentication is enabled alongside **OpenShift** SSO, fine-grained RBAC checks are bypassed for all authenticated users. Access becomes all-or-nothing for any user who successfully authenticates.
+
+##### Granting read-only access
+
+The example below remaps every `read` permission to `pods:get`, while leaving all mutating operations mapped to the default `pods/exec:create`. A user who holds the built-in **OpenShift** `view` role
+in the **Cryostat** installation namespace passes `pods:get` checks and therefore gets read-only access. A user who holds `admin` or `edit` passes `pods/exec:create` checks and therefore gets full access.
+
+```yaml
+apiVersion: operator.cryostat.io/v1beta2
+kind: Cryostat
+metadata:
+  name: cryostat-sample
+spec:
+  authorizationOptions:
+    rbacPermissions:
+      activerecordings:read: pods:get
+      archivedrecordings:read: pods:get
+      asyncprofiler:read: pods:get
+      automatedrules:read: pods:get
+      credentials:read: pods:get
+      discoverynodes:read: pods:get
+      discoveryplugins:read: pods:get
+      eventtemplates:read: pods:get
+      eventtypes:read: pods:get
+      heapdumps:read: pods:get
+      matchexpressions:read: pods:get
+      probes:read: pods:get
+      probetemplates:read: pods:get
+      recordingmetadata:read: pods:get
+      reports:read: pods:get
+      targets:read: pods:get
+      threaddumps:read: pods:get
+      unifiedlogs:read: pods:get
+```
+
+With this configuration, apply **OpenShift** RBAC as follows:
+
+- Grant `view` in the **Cryostat** installation namespace for read-only users:
+  ```
+  oc adm policy add-role-to-user -n <cryostat-namespace> view <username>
+  ```
+- Grant `admin` or `edit` in the **Cryostat** installation namespace for full-access users:
+  ```
+  oc adm policy add-role-to-user -n <cryostat-namespace> admin <username>
+  ```
+
+A user who has neither role may be able to log in (pass the `get pods` proxy access review), but all **Cryostat** API requests will be rejected with `403 Forbidden` until they are granted an appropriate role.
+
+##### Full permission reference
+
+The following table lists every available `<resource>:<verb>` key and its default **Kubernetes** permission mapping.
+
+| Key | Default mapping |
+|---|---|
+| `activerecordings:read` | `pods/exec:create` |
+| `activerecordings:write` | `pods/exec:create` |
+| `activerecordings:delete` | `pods/exec:create` |
+| `archivedrecordings:read` | `pods/exec:create` |
+| `archivedrecordings:write` | `pods/exec:create` |
+| `archivedrecordings:delete` | `pods/exec:create` |
+| `asyncprofiler:read` | `pods/exec:create` |
+| `asyncprofiler:write` | `pods/exec:create` |
+| `asyncprofiler:delete` | `pods/exec:create` |
+| `automatedrules:read` | `pods/exec:create` |
+| `automatedrules:write` | `pods/exec:create` |
+| `automatedrules:delete` | `pods/exec:create` |
+| `credentials:read` | `pods/exec:create` |
+| `credentials:write` | `pods/exec:create` |
+| `credentials:delete` | `pods/exec:create` |
+| `discoverynodes:read` | `pods/exec:create` |
+| `discoverynodes:write` | `pods/exec:create` |
+| `discoveryplugins:read` | `pods/exec:create` |
+| `discoveryplugins:write` | `pods/exec:create` |
+| `discoveryplugins:delete` | `pods/exec:create` |
+| `eventtemplates:read` | `pods/exec:create` |
+| `eventtemplates:write` | `pods/exec:create` |
+| `eventtemplates:delete` | `pods/exec:create` |
+| `eventtypes:read` | `pods/exec:create` |
+| `heapdumps:read` | `pods/exec:create` |
+| `heapdumps:write` | `pods/exec:create` |
+| `heapdumps:delete` | `pods/exec:create` |
+| `matchexpressions:read` | `pods/exec:create` |
+| `probes:read` | `pods/exec:create` |
+| `probes:write` | `pods/exec:create` |
+| `probes:delete` | `pods/exec:create` |
+| `probetemplates:read` | `pods/exec:create` |
+| `probetemplates:write` | `pods/exec:create` |
+| `probetemplates:delete` | `pods/exec:create` |
+| `recordingmetadata:read` | `pods/exec:create` |
+| `recordingmetadata:write` | `pods/exec:create` |
+| `reports:read` | `pods/exec:create` |
+| `reports:write` | `pods/exec:create` |
+| `targets:read` | `pods/exec:create` |
+| `targets:write` | `pods/exec:create` |
+| `targets:delete` | `pods/exec:create` |
+| `threaddumps:read` | `pods/exec:create` |
+| `threaddumps:write` | `pods/exec:create` |
+| `threaddumps:delete` | `pods/exec:create` |
+| `unifiedlogs:read` | `pods/exec:create` |
+| `unifiedlogs:write` | `pods/exec:create` |
+| `unifiedlogs:delete` | `pods/exec:create` |
+
+##### Cluster-scoped RBAC
+
+By default, access reviews are scoped to the **Cryostat** installation namespace, so users only need a `Role` and `RoleBinding` in that namespace. If you prefer cluster-scoped authorization (requiring a `ClusterRole` and `ClusterRoleBinding`), set `spec.authorizationOptions.namespacedRBACPermissions` to `false`:
+
+```yaml
+apiVersion: operator.cryostat.io/v1beta2
+kind: Cryostat
+metadata:
+  name: cryostat-sample
+spec:
+  authorizationOptions:
+    namespacedRBACPermissions: false
 ```
 
 
