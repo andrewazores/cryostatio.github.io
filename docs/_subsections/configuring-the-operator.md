@@ -393,7 +393,7 @@ against the **OpenShift** cluster for every incoming API request, checking wheth
 operation being requested. This allows an admin to assign some users full access to **Cryostat** and others only read access, using standard **OpenShift** (Cluster)Role and (Cluster)RoleBinding objects.
 
 Each **Cryostat** API permission is expressed as a `<resource>:<verb>` key (for example `activerecordings:read`) and is mapped to a **Kubernetes** resource/verb pair (for example `pods/exec:create`).
-When a user makes a request, **Cryostat** checks whether they are permitted to perform the mapped **Kubernetes** action, scoped to the **Cryostat** installation namespace. If the user passes the
+When a user makes a request, **Cryostat** checks whether they are permitted to perform the mapped **Kubernetes** action, scoped to the **Cryostat** installation namespace by default. If the user passes the
 check, the request proceeds; otherwise it is rejected with a `403 Forbidden` response.
 
 The built-in default mapping for every permission is `pods/exec:create`. This means that, out of the box, a user needs the (Cluster)Role which would grant them the ability to invoke shell commands
