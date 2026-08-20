@@ -257,7 +257,7 @@ When installed with <code>authentication.openshift.enabled=false</code> but <cod
 
 ##### Fine-Grained RBAC on OpenShift
 
-When `authentication.openshift.enabled=true` and Basic authentication is **not** enabled, **Cryostat** activates fine-grained RBAC mode. In this mode, **Cryostat** performs a `SelfSubjectAccessReview` against the **OpenShift** cluster for every incoming API request, checking whether the authenticated user holds a sufficiently privileged **OpenShift** Role for the specific **Cryostat** resource and operation being requested. This allows an admin to assign some users full access to **Cryostat** and others only read access, using standard **OpenShift** Role and RoleBinding objects.
+When `authentication.openshift.enabled=true` and Basic authentication is **not** enabled, **Cryostat** activates fine-grained RBAC mode. In this mode, **Cryostat** checks the authorization cache for every incoming API request and performs a new `SelfSubjectAccessReview` against the **OpenShift** cluster only on a cache miss, determining whether the authenticated user holds a sufficiently privileged **OpenShift** Role for the specific **Cryostat** resource and operation being requested. This allows an admin to assign some users full access to **Cryostat** and others only read access, using standard **OpenShift** Role and RoleBinding objects.
 
 Each **Cryostat** API permission is expressed as a `<resource>:<verb>` key (for example `activerecordings:read`) and is mapped to a **Kubernetes** resource/verb pair (for example `pods/exec:create`). The built-in default mapping for every permission is `pods/exec:create`. Admins can override individual permissions via `core.config.extra.envVars` by setting environment variables of the form `CRYOSTAT_SECURITY_RBAC_PERMISSIONS__<RESOURCE>_<VERB>_` to a value of the form `resource[/subresource]:verb`.
 
@@ -269,7 +269,7 @@ Each **Cryostat** API permission is expressed as a `<resource>:<verb>` key (for 
 
 To give some users read-only access and others full access, remap every `read` permission to `pods:get` (a lower privilege granted by the built-in **OpenShift** `view` role) while leaving mutating permissions at the default `pods/exec:create` (granted by `admin` or `edit`).
 
-Pass the permission overrides via `core.config.extra.envVars` when installing or upgrading the chart. The example below shows `helm upgrade` syntax using `--set-json`:
+Pass the permission overrides via `core.config.extra.envVars` when installing or upgrading the chart. The example below shows `helm upgrade` syntax using `--set-json`. This replaces the entire `core.config.extra.envVars` array, so preserve and include any existing entries or provide a complete values file instead:
 
 ```bash
 helm upgrade cryostat ./charts/cryostat -n <cryostat-namespace> \
@@ -309,7 +309,7 @@ With this configuration, apply **OpenShift** RBAC as follows:
   oc adm policy add-role-to-user -n <cryostat-namespace> admin <username>
   ```
 
-A user who has neither role will be able to log in (they pass the `get pods` proxy access review), but all **Cryostat** API requests will be rejected with `403 Forbidden` until they are granted an appropriate role.
+A user who passes the `get pods` proxy access review can reach the **Cryostat** application, but individual **Cryostat** API requests may still be rejected with `403 Forbidden` until they are granted an appropriate role.
 
 For a full list of available permission keys and their defaults, see the [Full permission reference](#full-permission-reference) table in the Operator configuration section.
 

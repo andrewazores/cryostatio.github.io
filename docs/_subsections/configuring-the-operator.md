@@ -356,9 +356,9 @@ spec:
 ### Authorization Options
 
 On **OpenShift**, the authentication/authorization proxy deployed in front of the **Cryostat** application requires all users to pass a `get pods` access review in the **Cryostat** installation namespace
-by default. This means that access to the **Cryostat** application is granted to exactly the set of **OpenShift** cluster user accounts and service accounts which have this Role. This can be configured
+by default. This means that any **OpenShift** cluster user account or service account that passes the configured access review can reach the **Cryostat** application. This can be configured
 using `spec.authorizationOptions.openShiftSSO.accessReview` as depicted below, but note that the `namespace` field should always be included and in most cases should match the **Cryostat** installation namespace.
-This Role only grants basic access to the Cryostat API and UI - see [below](#fine-grained-rbac-on-openshift) for further details on how Cryostat handles RBAC checks for specific actions.
+Passing this review only grants basic access to the **Cryostat** API and UI entry points - see [below](#fine-grained-rbac-on-openshift) for further details on how **Cryostat** handles RBAC checks for specific actions.
 
 The auth proxy may also be configured to allow Basic authentication by creating a **Secret** containing an `htpasswd` user file. An `htpasswd` file granting access to a user named `user` with the
 password `pass` can be generated like this: `htpasswd -cbB htpasswd.conf user pass`. The password should use `bcrypt` hashing, specified by the `-B` flag.
@@ -388,8 +388,8 @@ spec:
 
 #### Fine-Grained RBAC on OpenShift
 
-When **OpenShift** SSO integration is enabled and Basic authentication is **not** enabled, **Cryostat** activates fine-grained RBAC mode. In this mode, **Cryostat** performs a `SelfSubjectAccessReview`
-against the **OpenShift** cluster for every incoming API request, checking whether the authenticated user holds a sufficiently privileged **OpenShift** Role for the specific **Cryostat** resource and
+When **OpenShift** SSO integration is enabled and Basic authentication is **not** enabled, **Cryostat** activates fine-grained RBAC mode. In this mode, **Cryostat** checks the authorization cache for every incoming API request and performs a new `SelfSubjectAccessReview`
+against the **OpenShift** cluster only on a cache miss, checking whether the authenticated user holds a sufficiently privileged **OpenShift** Role for the specific **Cryostat** resource and
 operation being requested. This allows an admin to assign some users full access to **Cryostat** and others only read access, using standard **OpenShift** (Cluster)Role and (Cluster)RoleBinding objects.
 
 Each **Cryostat** API permission is expressed as a `<resource>:<verb>` key (for example `activerecordings:read`) and is mapped to a **Kubernetes** resource/verb pair (for example `pods/exec:create`).
