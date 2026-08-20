@@ -499,7 +499,7 @@ Setting `decisionCacheTTL: "0s"` or `decisionCacheMaximumSize: 0` disables the d
 
 ##### Cluster-scoped RBAC
 
-By default, access reviews are scoped to the **Cryostat** installation namespace, so users only need a `Role` and `RoleBinding` in that namespace. If you prefer cluster-scoped authorization (requiring a `ClusterRole` and `ClusterRoleBinding`), set `spec.authorizationOptions.namespacedRBACPermissions` to `false`:
+By default, access reviews are scoped to the **Cryostat** installation namespace (i.e. the namespace where the **CR** is created), so users only need a `Role` and `RoleBinding` within that namespace to pass the various permissions checks. If you prefer cluster-scoped authorization (requiring a `ClusterRole` and `ClusterRoleBinding`), set `spec.authorizationOptions.namespacedRBACPermissions` to `false`:
 
 ```yaml
 apiVersion: operator.cryostat.io/v1beta2
@@ -511,6 +511,7 @@ spec:
     namespacedRBACPermissions: false
 ```
 
+Setting `namespacedRBACPermissions: false` will require users to be able to pass the various permissions checks across all namespaces across the cluster, rather than only within the **CR**'s namespace. The `namespacedRBACPermissions` property is unset by default, which is equivalent to setting it to `true`: permissions are checked within the installation namespace only.
 
 ### Security Context
 
