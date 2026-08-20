@@ -397,8 +397,12 @@ When a user makes a request, **Cryostat** checks whether they are permitted to p
 check, the request proceeds; otherwise it is rejected with a `403 Forbidden` response.
 
 The built-in default mapping for every permission is `pods/exec:create`. This means that, out of the box, a user needs the (Cluster)Role which would grant them the ability to invoke shell commands
-within Pods in the **Cryostat** installation namespace. Admins can override this default per-permission via `spec.authorizationOptions.rbacPermissions`, remapping individual permissions to
-lower-privilege **Kubernetes** roles in order to extend read-only access to less-privileged users, or to create custom (Cluster)Roles and (Cluster)RoleBindings as needed.
+within Pods in the **Cryostat** installation namespace. Admins can override this default; **Cryostat** resolves the effective mapping for each permission in order from most to least specific:
+
+1. An explicit entry in `spec.authorizationOptions.rbacPermissions` for that exact `<resource>:<verb>` key.
+2. A verb-class fallback in `spec.authorizationOptions.rbacDefaultPermissions` (`defaultReadPermission`, `defaultWritePermission`, or `defaultDeletePermission`).
+3. The global catch-all `spec.authorizationOptions.rbacDefaultPermissions.defaultPermission`.
+4. The built-in application default: `pods/exec:create` for all permissions.
 
 **Cryostat** caches authorization decisions for one minute by default. Changes to user Roles or RoleBindings may take up to one minute to take effect.
 
@@ -408,6 +412,21 @@ lower-privilege **Kubernetes** roles in order to extend read-only access to less
 
 The example below remaps every `read` permission to `pods:get`, while leaving all mutating operations mapped to the default `pods/exec:create`. A user who holds the built-in **OpenShift** `view` role
 in the **Cryostat** installation namespace passes `pods:get` checks and therefore gets read-only access. A user who holds `admin` or `edit` passes `pods/exec:create` checks and therefore gets full access.
+
+The most concise way to achieve this is via `spec.authorizationOptions.rbacDefaultPermissions`:
+
+```yaml
+apiVersion: operator.cryostat.io/v1beta2
+kind: Cryostat
+metadata:
+  name: cryostat-sample
+spec:
+  authorizationOptions:
+    rbacDefaultPermissions:
+      defaultReadPermission: pods:get
+```
+
+Alternatively, individual permissions can be remapped explicitly via `spec.authorizationOptions.rbacPermissions`:
 
 ```yaml
 apiVersion: operator.cryostat.io/v1beta2
@@ -420,7 +439,9 @@ spec:
       activerecordings:read: pods:get
       archivedrecordings:read: pods:get
       asyncprofiler:read: pods:get
+      audit:read: pods:get
       automatedrules:read: pods:get
+      certificates:read: pods:get
       credentials:read: pods:get
       discoverynodes:read: pods:get
       discoveryplugins:read: pods:get
@@ -450,59 +471,31 @@ With this configuration, apply **OpenShift** RBAC as follows:
 
 A user who has neither role may be able to log in (pass the `get pods` proxy access review), but all **Cryostat** API requests will be rejected with `403 Forbidden` until they are granted an appropriate role.
 
-##### Full permission reference
+##### RBAC cache options
 
-The following table lists every available `<resource>:<verb>` key and its default **Kubernetes** permission mapping.
+**Cryostat** maintains two in-process caches in fine-grained RBAC mode to reduce the number of **Kubernetes** API calls:
 
-| Key | Default mapping |
-|---|---|
-| `activerecordings:read` | `pods/exec:create` |
-| `activerecordings:write` | `pods/exec:create` |
-| `activerecordings:delete` | `pods/exec:create` |
-| `archivedrecordings:read` | `pods/exec:create` |
-| `archivedrecordings:write` | `pods/exec:create` |
-| `archivedrecordings:delete` | `pods/exec:create` |
-| `asyncprofiler:read` | `pods/exec:create` |
-| `asyncprofiler:write` | `pods/exec:create` |
-| `asyncprofiler:delete` | `pods/exec:create` |
-| `automatedrules:read` | `pods/exec:create` |
-| `automatedrules:write` | `pods/exec:create` |
-| `automatedrules:delete` | `pods/exec:create` |
-| `credentials:read` | `pods/exec:create` |
-| `credentials:write` | `pods/exec:create` |
-| `credentials:delete` | `pods/exec:create` |
-| `discoverynodes:read` | `pods/exec:create` |
-| `discoverynodes:write` | `pods/exec:create` |
-| `discoveryplugins:read` | `pods/exec:create` |
-| `discoveryplugins:write` | `pods/exec:create` |
-| `discoveryplugins:delete` | `pods/exec:create` |
-| `eventtemplates:read` | `pods/exec:create` |
-| `eventtemplates:write` | `pods/exec:create` |
-| `eventtemplates:delete` | `pods/exec:create` |
-| `eventtypes:read` | `pods/exec:create` |
-| `heapdumps:read` | `pods/exec:create` |
-| `heapdumps:write` | `pods/exec:create` |
-| `heapdumps:delete` | `pods/exec:create` |
-| `matchexpressions:read` | `pods/exec:create` |
-| `probes:read` | `pods/exec:create` |
-| `probes:write` | `pods/exec:create` |
-| `probes:delete` | `pods/exec:create` |
-| `probetemplates:read` | `pods/exec:create` |
-| `probetemplates:write` | `pods/exec:create` |
-| `probetemplates:delete` | `pods/exec:create` |
-| `recordingmetadata:read` | `pods/exec:create` |
-| `recordingmetadata:write` | `pods/exec:create` |
-| `reports:read` | `pods/exec:create` |
-| `reports:write` | `pods/exec:create` |
-| `targets:read` | `pods/exec:create` |
-| `targets:write` | `pods/exec:create` |
-| `targets:delete` | `pods/exec:create` |
-| `threaddumps:read` | `pods/exec:create` |
-| `threaddumps:write` | `pods/exec:create` |
-| `threaddumps:delete` | `pods/exec:create` |
-| `unifiedlogs:read` | `pods/exec:create` |
-| `unifiedlogs:write` | `pods/exec:create` |
-| `unifiedlogs:delete` | `pods/exec:create` |
+- **Per-user client cache**: holds a per-user **Kubernetes** client. Defaults to a 5-minute idle TTL and a maximum of 1000 entries.
+- **Decision cache**: caches `SelfSubjectAccessReview` results. Defaults to a 1-minute write TTL and a maximum of 10000 entries.
+
+Both caches can be tuned via `spec.authorizationOptions.rbacCacheOptions`:
+
+```yaml
+apiVersion: operator.cryostat.io/v1beta2
+kind: Cryostat
+metadata:
+  name: cryostat-sample
+spec:
+  authorizationOptions:
+    rbacCacheOptions:
+      clientCacheExpireAfterAccess: "5m"   # idle TTL for the per-user client cache (Go duration)
+      clientCacheMaximumSize: 1000         # max entries; set to 0 to disable
+      decisionCacheTTL: "1m"              # write TTL for SSAR decision cache (Go duration)
+      decisionCacheMaximumSize: 10000     # max entries; set to 0 to disable
+```
+
+Setting `decisionCacheTTL: "0s"` or `decisionCacheMaximumSize: 0` disables the decision cache entirely so every request issues a fresh `SelfSubjectAccessReview`. Similarly, setting
+`clientCacheExpireAfterAccess: "0s"` or `clientCacheMaximumSize: 0` disables the client cache.
 
 ##### Cluster-scoped RBAC
 
